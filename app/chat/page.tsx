@@ -17,10 +17,14 @@ import {
   Trash2,
   Check,
   X,
+  Menu,
 } from "lucide-react";
+import { useWindowSize } from "@/hooks/useWindowSize";
+
 
 export default function ChatPage() {
   const router = useRouter();
+  const { isMobile } = useWindowSize();
   const [user, setUser] = useState<User | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
@@ -33,11 +37,11 @@ export default function ChatPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user: authUser }, error }) => {
-      // Session muddati tugagan yoki xato
       if (error || !authUser) {
         supabase.auth.signOut();
         router.push("/");
@@ -69,14 +73,12 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, message]);
       });
 
-      // Edit event
       socket.on("message:edited", (updated: Message) => {
         setMessages((prev) =>
           prev.map((m) => m.id === updated.id ? updated : m)
         );
       });
 
-      // Delete event
       socket.on("message:deleted", (messageId: string) => {
         setMessages((prev) => prev.filter((m) => m.id !== messageId));
       });
@@ -135,6 +137,7 @@ export default function ChatPage() {
     setMessages([]);
     setTyping("");
     setEditingId(null);
+    setSidebarOpen(false);
   };
 
   const handleSend = () => {
@@ -225,6 +228,20 @@ export default function ChatPage() {
       background: "#0f172a",
       overflow: "hidden",
     }}>
+
+      {/* Mobile overlay */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            zIndex: 40,
+          }}
+        />
+      )}
+
       {/* Sidebar */}
       <aside style={{
         width: "260px",
@@ -232,6 +249,14 @@ export default function ChatPage() {
         borderRight: "1px solid #1e293b",
         display: "flex",
         flexDirection: "column",
+        position: isMobile ? "fixed" : "relative",
+        left: 0,
+        top: 0,
+        bottom: 0,
+        height: isMobile ? "100vh" : "auto",
+        zIndex: 50,
+        transform: isMobile && !sidebarOpen ? "translateX(-260px)" : "translateX(0)",
+        transition: "transform 0.3s ease",
         flexShrink: 0,
       }}>
         {/* Logo */}
@@ -273,6 +298,7 @@ export default function ChatPage() {
           }}>
             Channels
           </p>
+
           {rooms.map((room) => (
             <button
               key={room.id}
@@ -313,6 +339,7 @@ export default function ChatPage() {
           }}>
             Online — {onlineUsers.length}
           </p>
+
           <div style={{
             display: "flex",
             alignItems: "center",
@@ -380,7 +407,13 @@ export default function ChatPage() {
       </aside>
 
       {/* Main chat */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        marginLeft: isMobile ? 0 : 0,
+      }}>
         {/* Header */}
         <header style={{
           padding: "1rem 1.5rem",
@@ -392,11 +425,27 @@ export default function ChatPage() {
           flexShrink: 0,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.625rem" }}>
+            {isMobile && (
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#94a3b8",
+                  display: "flex",
+                  padding: "0.25rem",
+                  marginRight: "0.25rem",
+                }}
+              >
+                <Menu size={20} />
+              </button>
+            )}
             <Hash size={18} color="#6366f1" />
             <span style={{ fontWeight: 600, color: "#f1f5f9" }}>
               {activeRoom?.name || "Select a room"}
             </span>
-            {activeRoom?.description && (
+            {activeRoom?.description && !isMobile && (
               <span style={{
                 fontSize: "0.75rem",
                 color: "#475569",
@@ -417,7 +466,7 @@ export default function ChatPage() {
         <div style={{
           flex: 1,
           overflowY: "auto",
-          padding: "1.5rem",
+          padding: isMobile ? "1rem" : "1.5rem",
           display: "flex",
           flexDirection: "column",
           gap: "0.25rem",
@@ -472,16 +521,13 @@ export default function ChatPage() {
                     alignItems: "flex-end",
                     gap: "0.5rem",
                     flexDirection: isOwn ? "row-reverse" : "row",
-                    width: "100%",
-                    justifyContent: isOwn ? "flex-start" : "flex-start",
                   }}>
-                    {/* Edit/Delete tugmalar — faqat o'z xabarida */}
-                    {isOwn && isHovered && !isEditing && (
+                    {/* Edit/Delete — faqat o'z xabarida, hover'da */}
+                    {isOwn && (isHovered || isMobile) && !isEditing && (
                       <div style={{
                         display: "flex",
                         gap: "0.25rem",
                         alignItems: "center",
-                        order: isOwn ? 1 : -1,
                       }}>
                         <button
                           onClick={() => handleEdit(msg)}
@@ -515,7 +561,7 @@ export default function ChatPage() {
                     )}
 
                     {/* Message bubble */}
-                    <div style={{ maxWidth: "420px" }}>
+                    <div style={{ maxWidth: isMobile ? "280px" : "420px" }}>
                       {isEditing ? (
                         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                           <input
@@ -534,7 +580,7 @@ export default function ChatPage() {
                               color: "#f1f5f9",
                               fontSize: "0.875rem",
                               outline: "none",
-                              minWidth: "200px",
+                              minWidth: isMobile ? "160px" : "200px",
                             }}
                           />
                           <button
@@ -617,13 +663,12 @@ export default function ChatPage() {
               {typing}
             </div>
           )}
-
           <div ref={messagesEndRef} />
         </div>
 
         {/* Input */}
         <div style={{
-          padding: "1rem 1.5rem",
+          padding: isMobile ? "0.75rem 1rem" : "1rem 1.5rem",
           borderTop: "1px solid #1e293b",
           background: "#0f172a",
           flexShrink: 0,
@@ -670,14 +715,16 @@ export default function ChatPage() {
               <Send size={18} color={input.trim() ? "white" : "#475569"} />
             </button>
           </div>
-          <p style={{
-            fontSize: "0.7rem",
-            color: "#334155",
-            marginTop: "0.5rem",
-            textAlign: "center",
-          }}>
-            Press Enter to send · Hover message to edit or delete
-          </p>
+          {!isMobile && (
+            <p style={{
+              fontSize: "0.7rem",
+              color: "#334155",
+              marginTop: "0.5rem",
+              textAlign: "center",
+            }}>
+              Press Enter to send · Hover message to edit or delete
+            </p>
+          )}
         </div>
       </div>
     </div>
