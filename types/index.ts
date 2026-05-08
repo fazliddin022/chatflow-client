@@ -12,6 +12,7 @@ export type Message = {
   sender_id: string;
   sender_name: string;
   content: string;
+  is_edited: boolean;
   created_at: string;
 };
 

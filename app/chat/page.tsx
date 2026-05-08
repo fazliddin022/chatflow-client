@@ -13,6 +13,10 @@ import {
   Users,
   Wifi,
   WifiOff,
+  Pencil,
+  Trash2,
+  Check,
+  X,
 } from "lucide-react";
 
 export default function ChatPage() {
@@ -26,12 +30,16 @@ export default function ChatPage() {
   const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
   const [typing, setTyping] = useState("");
   const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auth tekshirish
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user: authUser } }) => {
-      if (!authUser) {
+    supabase.auth.getUser().then(({ data: { user: authUser }, error }) => {
+      // Session muddati tugagan yoki xato
+      if (error || !authUser) {
+        supabase.auth.signOut();
         router.push("/");
         return;
       }
@@ -44,8 +52,6 @@ export default function ChatPage() {
       };
 
       setUser(userData);
-
-      // Socket'ga ulanish
       socket.connect();
 
       socket.on("connect", () => {
@@ -63,6 +69,18 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, message]);
       });
 
+      // Edit event
+      socket.on("message:edited", (updated: Message) => {
+        setMessages((prev) =>
+          prev.map((m) => m.id === updated.id ? updated : m)
+        );
+      });
+
+      // Delete event
+      socket.on("message:deleted", (messageId: string) => {
+        setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      });
+
       socket.on("typing:show", (name: string) => {
         setTyping(`${name} is typing...`);
       });
@@ -75,13 +93,14 @@ export default function ChatPage() {
       socket.off("disconnect");
       socket.off("users:online");
       socket.off("message:receive");
+      socket.off("message:edited");
+      socket.off("message:deleted");
       socket.off("typing:show");
       socket.off("typing:hide");
       socket.disconnect();
     };
   }, [router]);
 
-  // Xonalarni yuklash
   useEffect(() => {
     supabase
       .from("rooms")
@@ -95,66 +114,80 @@ export default function ChatPage() {
       });
   }, []);
 
-  // Xonaga qo'shilish va xabarlarni yuklash
   useEffect(() => {
     if (!activeRoom || !connected) return;
-
     socket.emit("room:join", activeRoom.id);
-
     supabase
       .from("messages")
       .select("*")
       .eq("room_id", activeRoom.id)
       .order("created_at")
-      .then(({ data }) => {
-        setMessages(data || []);
-      });
+      .then(({ data }) => setMessages(data || []));
   }, [activeRoom, connected]);
 
-  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const handleRoomChange = (room: Room) => {
-    if (activeRoom) {
-      socket.emit("room:leave", activeRoom.id);
-    }
+    if (activeRoom) socket.emit("room:leave", activeRoom.id);
     setActiveRoom(room);
     setMessages([]);
     setTyping("");
+    setEditingId(null);
   };
 
   const handleSend = () => {
     if (!input.trim() || !user || !activeRoom) return;
-
     socket.emit("message:send", {
       roomId: activeRoom.id,
       senderId: user.id,
       content: input.trim(),
       senderName: user.name,
     });
-
     setInput("");
     socket.emit("typing:stop", { roomId: activeRoom.id });
   };
 
   const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
-
     if (!activeRoom || !user) return;
-
-    socket.emit("typing:start", {
-      roomId: activeRoom.id,
-      userName: user.name,
-    });
-
+    socket.emit("typing:start", { roomId: activeRoom.id, userName: user.name });
     if (typingTimeout) clearTimeout(typingTimeout);
     setTypingTimeout(
       setTimeout(() => {
         socket.emit("typing:stop", { roomId: activeRoom.id });
       }, 1500)
     );
+  };
+
+  const handleEdit = (msg: Message) => {
+    setEditingId(msg.id);
+    setEditContent(msg.content);
+  };
+
+  const handleEditSave = (msg: Message) => {
+    if (!editContent.trim() || !activeRoom) return;
+    socket.emit("message:edit", {
+      messageId: msg.id,
+      content: editContent.trim(),
+      roomId: activeRoom.id,
+    });
+    setEditingId(null);
+    setEditContent("");
+  };
+
+  const handleEditCancel = () => {
+    setEditingId(null);
+    setEditContent("");
+  };
+
+  const handleDelete = (messageId: string) => {
+    if (!activeRoom) return;
+    socket.emit("message:delete", {
+      messageId,
+      roomId: activeRoom.id,
+    });
   };
 
   const handleSignOut = async () => {
@@ -192,7 +225,6 @@ export default function ChatPage() {
       background: "#0f172a",
       overflow: "hidden",
     }}>
-
       {/* Sidebar */}
       <aside style={{
         width: "260px",
@@ -223,14 +255,10 @@ export default function ChatPage() {
               ChatFlow
             </span>
           </div>
-
-          {/* Connection status */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}>
-            {connected
-              ? <Wifi size={14} color="#22c55e" />
-              : <WifiOff size={14} color="#ef4444" />
-            }
-          </div>
+          {connected
+            ? <Wifi size={14} color="#22c55e" />
+            : <WifiOff size={14} color="#ef4444" />
+          }
         </div>
 
         {/* Rooms */}
@@ -245,7 +273,6 @@ export default function ChatPage() {
           }}>
             Channels
           </p>
-
           {rooms.map((room) => (
             <button
               key={room.id}
@@ -267,13 +294,15 @@ export default function ChatPage() {
               }}
             >
               <Hash size={16} />
-              <span style={{ fontSize: "0.875rem", fontWeight: activeRoom?.id === room.id ? 600 : 400 }}>
+              <span style={{
+                fontSize: "0.875rem",
+                fontWeight: activeRoom?.id === room.id ? 600 : 400,
+              }}>
                 {room.name}
               </span>
             </button>
           ))}
 
-          {/* Online users */}
           <p style={{
             fontSize: "0.7rem",
             fontWeight: 600,
@@ -284,7 +313,6 @@ export default function ChatPage() {
           }}>
             Online — {onlineUsers.length}
           </p>
-
           <div style={{
             display: "flex",
             alignItems: "center",
@@ -306,7 +334,7 @@ export default function ChatPage() {
 
         {/* User footer */}
         <div style={{
-          padding: "2.28rem",
+          padding: "0.875rem",
           borderTop: "1px solid #1e293b",
           display: "flex",
           alignItems: "center",
@@ -334,7 +362,6 @@ export default function ChatPage() {
               <p style={{ fontSize: "0.7rem", color: "#475569" }}>Online</p>
             </div>
           </div>
-
           <button
             onClick={handleSignOut}
             style={{
@@ -352,16 +379,11 @@ export default function ChatPage() {
         </div>
       </aside>
 
-      {/* Main chat area */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}>
-        {/* Chat header */}
+      {/* Main chat */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Header */}
         <header style={{
-          padding: "1.36rem 1.5rem",
+          padding: "1rem 1.5rem",
           borderBottom: "1px solid #1e293b",
           display: "flex",
           alignItems: "center",
@@ -380,13 +402,11 @@ export default function ChatPage() {
                 color: "#475569",
                 borderLeft: "1px solid #1e293b",
                 paddingLeft: "0.625rem",
-                marginLeft: "0.125rem",
               }}>
                 {activeRoom.description}
               </span>
             )}
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#475569" }}>
             <Users size={16} />
             <span style={{ fontSize: "0.75rem" }}>{onlineUsers.length} online</span>
@@ -413,22 +433,28 @@ export default function ChatPage() {
               gap: "0.75rem",
             }}>
               <Hash size={40} color="#1e293b" />
-              <p style={{ fontSize: "0.875rem" }}>
-                No messages yet. Say hello! 👋
-              </p>
+              <p style={{ fontSize: "0.875rem" }}>No messages yet. Say hello! 👋</p>
             </div>
           ) : (
             messages.map((msg, i) => {
               const isOwn = msg.sender_id === user.id;
               const showName = i === 0 || messages[i - 1].sender_id !== msg.sender_id;
+              const isEditing = editingId === msg.id;
+              const isHovered = hoveredId === msg.id;
 
               return (
-                <div key={msg.id} style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: isOwn ? "flex-end" : "flex-start",
-                  marginTop: showName ? "0.75rem" : "0.125rem",
-                }}>
+                <div
+                  key={msg.id}
+                  onMouseEnter={() => setHoveredId(msg.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: isOwn ? "flex-end" : "flex-start",
+                    marginTop: showName ? "0.75rem" : "0.125rem",
+                    position: "relative",
+                  }}
+                >
                   {showName && !isOwn && (
                     <span style={{
                       fontSize: "0.75rem",
@@ -446,23 +472,133 @@ export default function ChatPage() {
                     alignItems: "flex-end",
                     gap: "0.5rem",
                     flexDirection: isOwn ? "row-reverse" : "row",
+                    width: "100%",
+                    justifyContent: isOwn ? "flex-start" : "flex-start",
                   }}>
-                    <div style={{
-                      maxWidth: "420px",
-                      padding: "0.625rem 0.875rem",
-                      borderRadius: isOwn
-                        ? "1rem 1rem 0.25rem 1rem"
-                        : "1rem 1rem 1rem 0.25rem",
-                      background: isOwn ? "#6366f1" : "#1e293b",
-                      color: isOwn ? "white" : "#e2e8f0",
-                      fontSize: "0.875rem",
-                      lineHeight: 1.5,
-                      wordBreak: "break-word",
-                    }}>
-                      {msg.content}
+                    {/* Edit/Delete tugmalar — faqat o'z xabarida */}
+                    {isOwn && isHovered && !isEditing && (
+                      <div style={{
+                        display: "flex",
+                        gap: "0.25rem",
+                        alignItems: "center",
+                        order: isOwn ? 1 : -1,
+                      }}>
+                        <button
+                          onClick={() => handleEdit(msg)}
+                          style={{
+                            background: "#1e293b",
+                            border: "none",
+                            borderRadius: "0.5rem",
+                            padding: "0.375rem",
+                            cursor: "pointer",
+                            display: "flex",
+                            color: "#94a3b8",
+                          }}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(msg.id)}
+                          style={{
+                            background: "#1e293b",
+                            border: "none",
+                            borderRadius: "0.5rem",
+                            padding: "0.375rem",
+                            cursor: "pointer",
+                            display: "flex",
+                            color: "#ef4444",
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Message bubble */}
+                    <div style={{ maxWidth: "420px" }}>
+                      {isEditing ? (
+                        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                          <input
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleEditSave(msg);
+                              if (e.key === "Escape") handleEditCancel();
+                            }}
+                            autoFocus
+                            style={{
+                              padding: "0.5rem 0.75rem",
+                              borderRadius: "0.75rem",
+                              border: "1px solid #6366f1",
+                              background: "#1e293b",
+                              color: "#f1f5f9",
+                              fontSize: "0.875rem",
+                              outline: "none",
+                              minWidth: "200px",
+                            }}
+                          />
+                          <button
+                            onClick={() => handleEditSave(msg)}
+                            style={{
+                              background: "#6366f1",
+                              border: "none",
+                              borderRadius: "0.5rem",
+                              padding: "0.375rem",
+                              cursor: "pointer",
+                              display: "flex",
+                              color: "white",
+                            }}
+                          >
+                            <Check size={14} />
+                          </button>
+                          <button
+                            onClick={handleEditCancel}
+                            style={{
+                              background: "#1e293b",
+                              border: "none",
+                              borderRadius: "0.5rem",
+                              padding: "0.375rem",
+                              cursor: "pointer",
+                              display: "flex",
+                              color: "#94a3b8",
+                            }}
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{
+                          padding: "0.625rem 0.875rem",
+                          borderRadius: isOwn
+                            ? "1rem 1rem 0.25rem 1rem"
+                            : "1rem 1rem 1rem 0.25rem",
+                          background: isOwn ? "#6366f1" : "#1e293b",
+                          color: isOwn ? "white" : "#e2e8f0",
+                          fontSize: "0.875rem",
+                          lineHeight: 1.5,
+                          wordBreak: "break-word",
+                        }}>
+                          {msg.content}
+                          {msg.is_edited && (
+                            <span style={{
+                              fontSize: "0.65rem",
+                              opacity: 0.6,
+                              marginLeft: "0.375rem",
+                              fontStyle: "italic",
+                            }}>
+                              (edited)
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
-                    <span style={{ fontSize: "0.65rem", color: "#475569", flexShrink: 0 }}>
+                    <span style={{
+                      fontSize: "0.65rem",
+                      color: "#475569",
+                      flexShrink: 0,
+                      marginBottom: "0.125rem",
+                    }}>
                       {formatTime(msg.created_at)}
                     </span>
                   </div>
@@ -471,7 +607,6 @@ export default function ChatPage() {
             })
           )}
 
-          {/* Typing indicator */}
           {typing && (
             <div style={{
               fontSize: "0.75rem",
@@ -541,7 +676,7 @@ export default function ChatPage() {
             marginTop: "0.5rem",
             textAlign: "center",
           }}>
-            Press Enter to send
+            Press Enter to send · Hover message to edit or delete
           </p>
         </div>
       </div>
